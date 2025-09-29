@@ -1,248 +1,240 @@
 on:
   push:
     branches:
+    - fronted_fix
     - main
     - dev
-    - fronted_fix
   workflow_dispatch:
 
 
-name: "🚀 Build and Deploy website"
-
-env:
-  # choose: ssh | password
-  DEPLOY_WITH: ssh
-
-permissions:
-  contents: read
-
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: false
+name: 🚀 Build and Deploy website
 
 jobs:
   build:
-    name: "🏗 Build"
+    name: 🏗 Build
     runs-on: ubuntu-latest
     steps:
-    - name: "🚚 Get latest code"
+    - name: 🚚 Get latest code
       uses: actions/checkout@v4
 
-    - name: "🔧 Setup Node.js"
+    - name: 🔧 Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: "18"
-        cache: "npm"
+        node-version: '18'
 
-    - name: "📦 Install dependencies"
-      run: npm ci
+    - name: 📦 Install dependencies
+      run: npm install
 
-    - name: "🏗 Build and Export"
+    - name: 🏗 Build and Export
       run: npm run build && npm run export
 
-    - name: "📦 Archive production artifacts"
+    - name: 📦 Archive production artifacts
       uses: actions/upload-artifact@v4
       with:
         name: built-site
         path: ./out/
-        if-no-files-found: error
 
-  deploy-hostinger-ssh:
-    name: "🚀 Deploy to Hostinger (SSH Key)"
+  deploy-hostinger-password:
+    name: 🚀 Deploy to Hostinger (Password Auth)
     needs: build
     runs-on: ubuntu-latest
-    if: >
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix') && env.DEPLOY_WITH == 'ssh'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix'
+
     steps:
-    - name: "📥 Download artifact → ./out"
+    - name: 📥 Download artifact
       uses: actions/download-artifact@v4
       with:
         name: built-site
-        path: ./out
+        path: ./
 
-    - name: "🔍 Verify artifact contents"
+    - name: 🔍 Verify artifact contents
       run: |
-        echo "Top-level:"
+        echo "Contents of current directory:"
         ls -la
-        echo "out/:"
-        ls -la out/ || true
-        echo "Sample files:"
-        find out -maxdepth 2 -type f | head -20
+        echo "Contents of out directory:"
+        ls -la out/ || echo "out directory not found"
+        echo "Checking if files exist:"
+        find . -name "*.html" -o -name "*.js" -o -name "*.css" | head -10
 
-    - name: "🔑 Setup SSH key"
-      run: |
-        mkdir -p ~/.ssh
-        printf "%s" "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
-
-    - name: "📤 Upload files to Hostinger"
+    - name: 📤 Upload files to Hostinger
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
-        key_path: ~/.ssh/id_ed25519
-        source: "out/**" # ✅ upload the actual files
-        target: "/tmp/gmail_ext_front_temp/" # temp stage on server
+        password: ${{ secrets.SERVER_PASSWORD }}
+        source: "out/**"
+        target: "/tmp/gmail_ext_front_temp/"
 
-    - name: "🚀 Deploy to Apache"
+    - name: 🚀 Deploy to Apache
       uses: appleboy/ssh-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
-        key_path: ~/.ssh/id_ed25519
+        password: ${{ secrets.SERVER_PASSWORD }}
         script: |
-          set -euo pipefail
-
-          # Backup previous deploy (if any)
+          # Create backup if directory exists
           if [ -d "/var/www/html/gmail_ext_front" ]; then
             sudo mkdir -p /var/www/html/backups
             sudo cp -r /var/www/html/gmail_ext_front /var/www/html/backups/gmail_ext_front_backup_$(date +%Y%m%d_%H%M%S)
+            sudo rm -rf /var/www/html/gmail_ext_front
+            echo "✅ Backup created"
           fi
 
-          # Ensure target exists
+          # Create deployment directory and move files
           sudo mkdir -p /var/www/html/gmail_ext_front
+          sudo mv /tmp/gmail_ext_front_temp/* /var/www/html/gmail_ext_front/
 
-          # Sync staged files -> live (preserves perms, deletes removed assets)
-          sudo rsync -a --delete /tmp/gmail_ext_front_temp/ /var/www/html/gmail_ext_front/
-
-          # Permissions
+          # Set permissions
           sudo chown -R www-data:www-data /var/www/html/gmail_ext_front
           sudo chmod -R 755 /var/www/html/gmail_ext_front
 
-          # SPA routing + headers
+          # Install .htaccess for SPA routing
           sudo tee /var/www/html/gmail_ext_front/.htaccess > /dev/null << 'EOF'
           RewriteEngine On
           RewriteBase /
 
-          # Client-side routing for SPA
+          # Handle client-side routing for SPA
           RewriteCond %{REQUEST_FILENAME} !-f
           RewriteCond %{REQUEST_FILENAME} !-d
           RewriteCond %{REQUEST_URI} !^/api/
           RewriteCond %{REQUEST_URI} !\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$
           RewriteRule ^.*$ /index.html [L]
 
-          # Proxy API to backend
+          # Proxy API requests to backend
           RewriteCond %{REQUEST_URI} ^/api/(.*)$
           RewriteRule ^api/(.*)$ https://api.omeeai.com/om/%1 [P,L]
 
           # Security headers
           <IfModule mod_headers.c>
-            Header always set X-Content-Type-Options nosniff
-            Header always set X-Frame-Options DENY
-            Header always set X-XSS-Protection "1; mode=block"
-            Header always set Referrer-Policy "strict-origin-when-cross-origin"
+              Header always set X-Content-Type-Options nosniff
+              Header always set X-Frame-Options DENY
+              Header always set X-XSS-Protection "1; mode=block"
+              Header always set Referrer-Policy "strict-origin-when-cross-origin"
           </IfModule>
 
           # Cache static assets
           <IfModule mod_expires.c>
-            ExpiresActive On
-            ExpiresByType text/css "access plus 1 year"
-            ExpiresByType application/javascript "access plus 1 year"
-            ExpiresByType image/png "access plus 1 year"
-            ExpiresByType image/jpg "access plus 1 year"
-            ExpiresByType image/jpeg "access plus 1 year"
-            ExpiresByType image/svg+xml "access plus 1 year"
+              ExpiresActive On
+              ExpiresByType text/css "access plus 1 year"
+              ExpiresByType application/javascript "access plus 1 year"
+              ExpiresByType image/png "access plus 1 year"
+              ExpiresByType image/jpg "access plus 1 year"
           </IfModule>
           EOF
 
-          # Enable required Apache modules (Proxy needed for [P])
-          sudo a2enmod rewrite headers expires proxy proxy_http deflate
-          sudo systemctl reload apache2
-          echo "✅ SSH deploy complete"
+          # Enable Apache modules
+          sudo a2enmod rewrite headers expires deflate
 
-  deploy-hostinger-password:
-    name: "🚀 Deploy to Hostinger (Password Auth)"
+          # Reload Apache
+          sudo systemctl reload apache2
+
+          echo "✅ Deployment completed successfully!"
+          echo "🌐 Your app should be available at: http://${{ secrets.SERVER_HOST }}"
+
+  deploy-hostinger-sshkey:
+    name: 🚀 Deploy to Hostinger (SSH Key)
     needs: build
     runs-on: ubuntu-latest
-    if: >
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix') && env.DEPLOY_WITH == 'password'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix'
+    # Uncomment this job and comment out the password job above for SSH key authentication
+
     steps:
-    - name: "📥 Download artifact → ./out"
+    - name: 📥 Download artifact
       uses: actions/download-artifact@v4
       with:
         name: built-site
-        path: ./out
+        path: ./
 
-    - name: "🔍 Verify artifact contents"
+    - name: 🔍 Verify artifact contents
       run: |
-        echo "out/:"
-        ls -la out/ || true
-        find out -maxdepth 2 -type f | head -20
+        echo "Contents of current directory:"
+        ls -la
+        echo "Contents of out directory:"
+        ls -la out/ || echo "out directory not found"
+        echo "Checking if files exist:"
+        find . -name "*.html" -o -name "*.js" -o -name "*.css" | head -10
 
-    - name: "📤 Upload files to Hostinger"
+    - name: 🔑 Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+    - name: 📤 Upload files to Hostinger
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
-        password: ${{ secrets.SERVER_PASSWORD }}
-        source: "out/**" # ✅ not just 'out/'
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        source: "out/"
         target: "/tmp/gmail_ext_front_temp/"
+        strip_components: 1
 
-    - name: "🚀 Deploy to Apache"
+    - name: 🚀 Deploy to Apache
       uses: appleboy/ssh-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
-        password: ${{ secrets.SERVER_PASSWORD }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
         script: |
-          set -euo pipefail
+          # Create backup if directory exists
           if [ -d "/var/www/html/gmail_ext_front" ]; then
             sudo mkdir -p /var/www/html/backups
             sudo cp -r /var/www/html/gmail_ext_front /var/www/html/backups/gmail_ext_front_backup_$(date +%Y%m%d_%H%M%S)
+            sudo rm -rf /var/www/html/gmail_ext_front
+            echo "✅ Backup created"
           fi
+
+          # Create deployment directory and move files
           sudo mkdir -p /var/www/html/gmail_ext_front
-          sudo rsync -a --delete /tmp/gmail_ext_front_temp/ /var/www/html/gmail_ext_front/
+          sudo mv /tmp/gmail_ext_front_temp/* /var/www/html/gmail_ext_front/
+
+          # Set permissions
           sudo chown -R www-data:www-data /var/www/html/gmail_ext_front
           sudo chmod -R 755 /var/www/html/gmail_ext_front
 
+          # Install .htaccess for SPA routing
           sudo tee /var/www/html/gmail_ext_front/.htaccess > /dev/null << 'EOF'
           RewriteEngine On
           RewriteBase /
+
           RewriteCond %{REQUEST_FILENAME} !-f
           RewriteCond %{REQUEST_FILENAME} !-d
           RewriteCond %{REQUEST_URI} !^/api/
           RewriteCond %{REQUEST_URI} !\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$
           RewriteRule ^.*$ /index.html [L]
+
           RewriteCond %{REQUEST_URI} ^/api/(.*)$
           RewriteRule ^api/(.*)$ https://api.omeeai.com/om/%1 [P,L]
+
           <IfModule mod_headers.c>
-            Header always set X-Content-Type-Options nosniff
-            Header always set X-Frame-Options DENY
-            Header always set X-XSS-Protection "1; mode=block"
-            Header always set Referrer-Policy "strict-origin-when-cross-origin"
-          </IfModule>
-          <IfModule mod_expires.c>
-            ExpiresActive On
-            ExpiresByType text/css "access plus 1 year"
-            ExpiresByType application/javascript "access plus 1 year"
-            ExpiresByType image/png "access plus 1 year"
-            ExpiresByType image/jpg "access plus 1 year"
-            ExpiresByType image/jpeg "access plus 1 year"
-            ExpiresByType image/svg+xml "access plus 1 year"
+              Header always set X-Content-Type-Options nosniff
+              Header always set X-Frame-Options DENY
+              Header always set X-XSS-Protection "1; mode=block"
           </IfModule>
           EOF
 
-          sudo a2enmod rewrite headers expires proxy proxy_http deflate
+          sudo a2enmod rewrite headers expires deflate
           sudo systemctl reload apache2
-          echo "✅ Password deploy complete"
 
-  deploy-original-ftp:
-    name: "🚀 Deploy Original (FTP) - dev"
+          echo "✅ Deployment completed successfully!"
+
+  deploy-original:
+    name: 🚀 Deploy Original (FTP)
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/dev'
+
     steps:
-    - name: "📥 Download artifact"
+    - name: 📥 Download artifact
       uses: actions/download-artifact@v4
       with:
         name: built-site
-        path: ./out
 
-    - name: "📂 Sync files via FTP"
+    - name: 📂 Sync files - Dev branch deployment
       uses: SamKirkland/FTP-Deploy-Action@4.3.3
       with:
         server: ${{ secrets.DEV_FTP_SERVER }}
         username: ${{ secrets.DEV_FTP_USERNAME }}
         password: ${{ secrets.DEV_FTP_PASSWORD }}
-        local-dir: ./out/
