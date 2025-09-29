@@ -45,6 +45,16 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: built-site
+        path: ./
+
+    - name: 🔍 Verify artifact contents
+      run: |
+        echo "Contents of current directory:"
+        ls -la
+        echo "Contents of out directory:"
+        ls -la out/ || echo "out directory not found"
+        echo "Checking if files exist:"
+        find . -name "*.html" -o -name "*.js" -o -name "*.css" | head -10
 
     - name: 📤 Upload files to Hostinger
       uses: appleboy/scp-action@v0.1.7
@@ -52,9 +62,9 @@ jobs:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         password: ${{ secrets.SERVER_PASSWORD }}
-        source: "./out/"
+        source: "out/*"
         target: "/tmp/gmail_ext_front_temp/"
-        strip_components: 1
+        strip_components: 0
 
     - name: 🚀 Deploy to Apache
       uses: appleboy/ssh-action@v0.1.7
@@ -134,6 +144,23 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: built-site
+        path: ./
+
+    - name: 🔍 Verify artifact contents
+      run: |
+        echo "Contents of current directory:"
+        ls -la
+        echo "Contents of out directory:"
+        ls -la out/ || echo "out directory not found"
+        echo "Checking if files exist:"
+        find . -name "*.html" -o -name "*.js" -o -name "*.css" | head -10
+
+    - name: 🔑 Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
     - name: 📤 Upload files to Hostinger
       uses: appleboy/scp-action@v0.1.7
@@ -141,9 +168,9 @@ jobs:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SERVER_SSH_KEY }}
-        source: "./out/"
+        source: "out/*"
         target: "/tmp/gmail_ext_front_temp/"
-        strip_components: 1
+        strip_components: 0
 
     - name: 🚀 Deploy to Apache
       uses: appleboy/ssh-action@v0.1.7
