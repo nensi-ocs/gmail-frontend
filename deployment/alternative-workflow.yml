@@ -1,0 +1,214 @@
+on:
+  push:
+    branches:
+    - fronted_fix
+    - main
+    - dev
+  workflow_dispatch:
+
+
+name: 🚀 Build and Deploy website
+
+jobs:
+  build:
+    name: 🏗 Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: 🚚 Get latest code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: 📦 Install dependencies
+      run: npm install
+
+    - name: 🏗 Build and Export
+      run: npm run build && npm run export
+
+    - name: 📦 Archive production artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: built-site
+        path: ./out/
+
+  deploy-hostinger-password:
+    name: 🚀 Deploy to Hostinger (Password Auth)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix'
+
+    steps:
+    - name: 📥 Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: built-site
+
+    - name: 📤 Upload files to Hostinger
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        password: ${{ secrets.SERVER_PASSWORD }}
+        source: "./out/"
+        target: "/tmp/gmail_ext_front_temp/"
+        strip_components: 1
+
+    - name: 🚀 Deploy to Apache
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        password: ${{ secrets.SERVER_PASSWORD }}
+        script: |
+          # Create backup if directory exists
+          if [ -d "/var/www/html/gmail_ext_front" ]; then
+            sudo mkdir -p /var/www/html/backups
+            sudo cp -r /var/www/html/gmail_ext_front /var/www/html/backups/gmail_ext_front_backup_$(date +%Y%m%d_%H%M%S)
+            sudo rm -rf /var/www/html/gmail_ext_front
+            echo "✅ Backup created"
+          fi
+
+          # Create deployment directory and move files
+          sudo mkdir -p /var/www/html/gmail_ext_front
+          sudo mv /tmp/gmail_ext_front_temp/* /var/www/html/gmail_ext_front/
+
+          # Set permissions
+          sudo chown -R www-data:www-data /var/www/html/gmail_ext_front
+          sudo chmod -R 755 /var/www/html/gmail_ext_front
+
+          # Install .htaccess for SPA routing
+          sudo tee /var/www/html/gmail_ext_front/.htaccess > /dev/null << 'EOF'
+          RewriteEngine On
+          RewriteBase /
+
+          # Handle client-side routing for SPA
+          RewriteCond %{REQUEST_FILENAME} !-f
+          RewriteCond %{REQUEST_FILENAME} !-d
+          RewriteCond %{REQUEST_URI} !^/api/
+          RewriteCond %{REQUEST_URI} !\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$
+          RewriteRule ^.*$ /index.html [L]
+
+          # Proxy API requests to backend
+          RewriteCond %{REQUEST_URI} ^/api/(.*)$
+          RewriteRule ^api/(.*)$ https://api.omeeai.com/om/%1 [P,L]
+
+          # Security headers
+          <IfModule mod_headers.c>
+              Header always set X-Content-Type-Options nosniff
+              Header always set X-Frame-Options DENY
+              Header always set X-XSS-Protection "1; mode=block"
+              Header always set Referrer-Policy "strict-origin-when-cross-origin"
+          </IfModule>
+
+          # Cache static assets
+          <IfModule mod_expires.c>
+              ExpiresActive On
+              ExpiresByType text/css "access plus 1 year"
+              ExpiresByType application/javascript "access plus 1 year"
+              ExpiresByType image/png "access plus 1 year"
+              ExpiresByType image/jpg "access plus 1 year"
+          </IfModule>
+          EOF
+
+          # Enable Apache modules
+          sudo a2enmod rewrite headers expires deflate
+
+          # Reload Apache
+          sudo systemctl reload apache2
+
+          echo "✅ Deployment completed successfully!"
+          echo "🌐 Your app should be available at: http://${{ secrets.SERVER_HOST }}"
+
+  deploy-hostinger-sshkey:
+    name: 🚀 Deploy to Hostinger (SSH Key)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix'
+    # Uncomment this job and comment out the password job above for SSH key authentication
+
+    steps:
+    - name: 📥 Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: built-site
+
+    - name: 📤 Upload files to Hostinger
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        source: "./out/"
+        target: "/tmp/gmail_ext_front_temp/"
+        strip_components: 1
+
+    - name: 🚀 Deploy to Apache
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        script: |
+          # Create backup if directory exists
+          if [ -d "/var/www/html/gmail_ext_front" ]; then
+            sudo mkdir -p /var/www/html/backups
+            sudo cp -r /var/www/html/gmail_ext_front /var/www/html/backups/gmail_ext_front_backup_$(date +%Y%m%d_%H%M%S)
+            sudo rm -rf /var/www/html/gmail_ext_front
+            echo "✅ Backup created"
+          fi
+
+          # Create deployment directory and move files
+          sudo mkdir -p /var/www/html/gmail_ext_front
+          sudo mv /tmp/gmail_ext_front_temp/* /var/www/html/gmail_ext_front/
+
+          # Set permissions
+          sudo chown -R www-data:www-data /var/www/html/gmail_ext_front
+          sudo chmod -R 755 /var/www/html/gmail_ext_front
+
+          # Install .htaccess for SPA routing
+          sudo tee /var/www/html/gmail_ext_front/.htaccess > /dev/null << 'EOF'
+          RewriteEngine On
+          RewriteBase /
+
+          RewriteCond %{REQUEST_FILENAME} !-f
+          RewriteCond %{REQUEST_FILENAME} !-d
+          RewriteCond %{REQUEST_URI} !^/api/
+          RewriteCond %{REQUEST_URI} !\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$
+          RewriteRule ^.*$ /index.html [L]
+
+          RewriteCond %{REQUEST_URI} ^/api/(.*)$
+          RewriteRule ^api/(.*)$ https://api.omeeai.com/om/%1 [P,L]
+
+          <IfModule mod_headers.c>
+              Header always set X-Content-Type-Options nosniff
+              Header always set X-Frame-Options DENY
+              Header always set X-XSS-Protection "1; mode=block"
+          </IfModule>
+          EOF
+
+          sudo a2enmod rewrite headers expires deflate
+          sudo systemctl reload apache2
+
+          echo "✅ Deployment completed successfully!"
+
+  deploy-original:
+    name: 🚀 Deploy Original (FTP)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev'
+
+    steps:
+    - name: 📥 Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: built-site
+
+    - name: 📂 Sync files - Dev branch deployment
+      uses: SamKirkland/FTP-Deploy-Action@4.3.3
+      with:
+        server: ${{ secrets.DEV_FTP_SERVER }}
+        username: ${{ secrets.DEV_FTP_USERNAME }}
+        password: ${{ secrets.DEV_FTP_PASSWORD }}
