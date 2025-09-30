@@ -76,32 +76,6 @@ jobs:
           sudo chown -R www-data:www-data /var/www/html/gmail_ext_front
           sudo chmod -R 755 /var/www/html/gmail_ext_front
 
-          # .htaccess (unchanged)
-          sudo tee /var/www/html/gmail_ext_front/.htaccess > /dev/null << 'EOF'
-          RewriteEngine On
-          RewriteBase /
-          RewriteCond %{REQUEST_FILENAME} !-f
-          RewriteCond %{REQUEST_FILENAME} !-d
-          RewriteCond %{REQUEST_URI} !^/api/
-          RewriteCond %{REQUEST_URI} !\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$
-          RewriteRule ^.*$ /index.html [L]
-          RewriteCond %{REQUEST_URI} ^/api/(.*)$
-          RewriteRule ^api/(.*)$ https://api.omeeai.com/om/%1 [P,L]
-          <IfModule mod_headers.c>
-              Header always set X-Content-Type-Options nosniff
-              Header always set X-Frame-Options DENY
-              Header always set X-XSS-Protection "1; mode=block"
-              Header always set Referrer-Policy "strict-origin-when-cross-origin"
-          </IfModule>
-          <IfModule mod_expires.c>
-              ExpiresActive On
-              ExpiresByType text/css "access plus 1 year"
-              ExpiresByType application/javascript "access plus 1 year"
-              ExpiresByType image/png "access plus 1 year"
-              ExpiresByType image/jpg "access plus 1 year"
-          </IfModule>
-          EOF
-
           sudo a2enmod rewrite headers expires deflate
           sudo systemctl reload apache2
           echo "✅ Deployment completed"
