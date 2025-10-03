@@ -1,7 +1,6 @@
 on:
   push:
     branches:
-    - fronted_fix
     - main
     - dev
   workflow_dispatch:
@@ -38,7 +37,7 @@ jobs:
     name: 🚀 Deploy to Hostinger (Password Auth)
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fronted_fix'
+    if: github.ref == 'refs/heads/main'
 
     steps:
     - name: 📥 Download artifact
@@ -64,8 +63,8 @@ jobs:
         password: ${{ secrets.SERVER_PASSWORD }}
         script: |
           if [ -d "/var/www/html/gmail_ext_front" ]; then
-            sudo mkdir -p /var/www/html/backups
-            sudo cp -r /var/www/html/gmail_ext_front /var/www/html/backups/gmail_ext_front_backup_$(date +%Y%m%d_%H%M%S)
+            sudo mkdir -p /var/www/html/gmail_ext_front/backups
+            sudo cp -r /var/www/html/gmail_ext_front /var/www/html/gmail_ext_front/backups/gmail_ext_front_backup_$(date +%Y%m%d_%H%M%S)
             sudo rm -rf /var/www/html/gmail_ext_front
             echo "✅ Backup created"
           fi
